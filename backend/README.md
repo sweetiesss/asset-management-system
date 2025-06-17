@@ -31,7 +31,7 @@ A Spring Boot-based backend system for managing organizational assets, supportin
 ## 📂 Project Structure
 ```
 rookies.oam/
-│
+├── ...
 ├── src/
 ├── docker-compose.yml
 ├── .env
@@ -47,8 +47,13 @@ This project uses Docker to run the PostgreSQL database. You must have Docker an
 - Create a `.env` file in the project root (or copy from the template):
 - Fill in the necessary environment variables:
 ```
-POSTGRES_USER=your_db_user
-POSTGRES_PASSWORD=your_db_password
+SPRING_DATASOURCE_URL=your_datasource_db_connection
+SPRING_DATASOURCE_USERNAME=your_db_username
+SPRING_DATASOURCE_PASSWORD=your_db_password
+APP_FRONTEND_URL=http://localhost:3000/
+ADMIN_USERNAME=your_admin_default_username
+ADMIN_PASSWORD=your_admin_default_password
+JWT_SECRET=your_jwt_secret
 ```
 
 ### 2. Start PostgreSQL
