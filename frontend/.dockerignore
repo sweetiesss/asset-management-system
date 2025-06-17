@@ -1,0 +1,16 @@
+node_modules
+build
+dist
+.dockerignore
+Dockerfile
+.git
+.gitignore
+# temporarily include .env as workaround for env variable issue
+#.env
+#.env.*
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+*.md
+.vscode
+.idea

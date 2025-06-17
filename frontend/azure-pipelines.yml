@@ -1,0 +1,122 @@
+trigger:
+  - main
+
+pr:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureSubscription: 'oam-azure-connection'
+  appName: 'oam-frontend'
+  resourceGroupName: 'oam-resources'
+  containerRegistry: 'oamacr.azurecr.io'
+  imageRepository: 'rookies.oam-fe'
+  imageTag: 'latest'
+
+stages:
+  - stage: Build
+    displayName: 'Build and Test'
+    jobs:
+      - job: BuildTest
+        displayName: 'Build, Test, and Package'
+        steps:
+          # Step 1: Setup Node.js
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '20.x'
+            displayName: 'Install Node.js'
+            
+          # Step 2: Install dependencies
+          - script: |
+              npm ci
+            displayName: 'Install Dependencies'
+            
+          # Step 3: Run linting
+          - script: |
+              npm run lint
+            displayName: 'Run Linting'
+            
+          # Step 4: Build React application
+          - script: |
+              npm run build
+            displayName: 'Build React App'
+            
+          # Step 7: Copy build files to staging directory
+          - task: CopyFiles@2
+            inputs:
+              sourceFolder: '$(System.DefaultWorkingDirectory)/build'
+              contents: '**'
+              targetFolder: '$(Build.ArtifactStagingDirectory)'
+            displayName: 'Copy Build Files'
+            
+          # Step 8: Publish build artifacts
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: '$(Build.ArtifactStagingDirectory)'
+              artifactName: 'react-app'
+              publishLocation: 'Container'
+            displayName: 'Publish Build Artifacts'
+            
+          # Step 9: Build and push Docker image (only for main branch)
+          - task: Docker@2
+            displayName: 'Build and push Docker image'
+            condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+            inputs:
+              containerRegistry: '$(containerRegistry)'
+              repository: '$(imageRepository)'
+              command: 'buildAndPush'
+              Dockerfile: 'Dockerfile'
+              tags: |
+                $(imageTag)
+                latest
+              #arguments: '--build-arg VITE_BASE_URL=$(VITE_BASE_URL)'
+
+  - stage: Approval
+    displayName: 'Manual Approval for Deployment'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Wait for Manual Approval'
+        pool: server
+        steps:
+          - task: ManualValidation@0
+            # Timeout in 24 hours
+            timeoutInMinutes: 1440
+            inputs:
+              instructions: 'Please approve to proceed with Deployment.'
+              onTimeout: 'reject'
+              
+  - stage: Deploy
+    displayName: 'Deploy to Azure Web App'
+    dependsOn: Approval
+    condition: succeeded()
+    jobs:
+      - job: DeployToAppService
+        displayName: 'Deploy to App Service'
+        steps:
+          # Step 1: Deploy to Azure App Service
+          - task: AzureWebAppContainer@1
+            displayName: 'Deploy to Azure Web App for Containers'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appName: '$(appName)'
+              resourceGroupName: '$(resourceGroupName)'
+              imageName: '$(containerRegistry)/$(imageRepository):$(imageTag)'
+              
+          # Step 2: Update application settings if needed
+          - task: AzureAppServiceSettings@1
+            displayName: 'Update App Service Settings'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appName: '$(appName)'
+              resourceGroupName: '$(resourceGroupName)'
+              appSettings: |
+                [
+                  {
+                    "name": "VITE_BASE_URL",
+                    "value": "$(VITE_BASE_URL)"
+                  }
+                ]

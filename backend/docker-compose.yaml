@@ -1,0 +1,56 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rookies.oam-java:latest
+    ports:
+      - "8080:8080"
+    environment:
+      APP_FRONTEND_URL: ${APP_FRONTEND_URL:-http://frontend:80}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/oam
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-myuser}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-mypassword}
+      JWT_SECRET: ${JWT_SECRET:-mysecret}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+    depends_on:
+      - db
+    networks:
+      - app-network
+    restart: unless-stopped
+#    healthcheck:
+#      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+
+  frontend:
+    image: rookies.oam-fe:latest
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_BASE_URL=${VITE_BASE_URL:-http://backend:8080}
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${SPRING_DATASOURCE_USERNAME:-myuser}
+      POSTGRES_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-mypassword}
+      POSTGRES_DB: oam
+    ports:
+      - "5432:5432"
+    volumes:
+      - oam_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  oam_data:
+
+networks:
+  app-network:

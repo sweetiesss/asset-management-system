@@ -1,0 +1,160 @@
+trigger:
+  - main
+
+pr:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureSubscription: 'oam-azure-connection'
+  appName: 'oam-backend'
+  resourceGroupName: 'oam-resources'
+  containerRegistry: 'oamacr.azurecr.io'
+  imageRepository: 'rookies.oam-java'
+  imageTag: 'latest'
+
+stages:
+  - stage: Build
+    displayName: 'Build and Test'
+    jobs:
+      - job: BuildTest
+        displayName: 'Build, Test, and Package'
+        steps:
+          # Step 0: Restore Maven cache
+          - task: Cache@2
+            inputs:
+              key: 'maven | "$(Agent.OS)" | **/pom.xml'
+              restoreKeys: |
+                maven | "$(Agent.OS)"
+              path: $(HOME)/.m2/repository
+            displayName: 'Restore Maven dependencies cache'
+          # Step 1: Build with Maven and generate JaCoCo report
+          - task: Maven@4
+            displayName: 'Build with JaCoCo and Run Tests'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean verify'
+              mavenOptions: '-Xmx3072m'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.21'
+              jdkArchitectureOption: 'x64'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+
+          # Step 2: Check if jacoco.xml exists
+          - script: |
+              if [ -f $(System.DefaultWorkingDirectory)/target/site/jacoco/jacoco.xml ]; then
+                echo "##vso[task.setvariable variable=hasJacocoReport]true"
+              else
+                echo "JaCoCo report not found."
+              fi
+            displayName: 'Check for JaCoCo Report'
+
+          # Step 3: Publish JaCoCo coverage report
+          - task: PublishCodeCoverageResults@2
+            displayName: 'Publish JaCoCo Code Coverage'
+            inputs:
+              codeCoverageTool: 'JaCoCo'
+              summaryFileLocation: '$(System.DefaultWorkingDirectory)/target/site/jacoco/jacoco.xml'
+              reportDirectory: '$(System.DefaultWorkingDirectory)/target/site/jacoco'
+              pathToSources: '$(System.DefaultWorkingDirectory)/src/main/java'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish JaCoCo HTML Report'
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/target/site/jacoco'
+              ArtifactName: 'jacoco-html'
+              publishLocation: 'Container'
+
+          # Step 4: Package the JAR file as an artifact
+          - task: CopyFiles@2
+            displayName: 'Copy JAR to artifact staging directory'
+            condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+            inputs:
+              SourceFolder: '$(System.DefaultWorkingDirectory)/target'
+              Contents: '*.jar'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish JAR artifact'
+            condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'jar'
+              publishLocation: 'Container'
+          # Build and push Docker image to ACR
+          - task: Docker@2
+            displayName: 'Build and push Docker image'
+            condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+            inputs:
+              containerRegistry: '$(containerRegistry)'
+              repository: '$(imageRepository)'
+              command: 'buildAndPush'
+              Dockerfile: 'Dockerfile'
+              tags: |
+                $(imageTag)
+                latest
+  - stage: Approval
+    displayName: 'Manual Approval for Deployment'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Wait for Manual Approval'
+        pool: server
+        steps:
+          - task: ManualValidation@0
+            # Timeout in 24 hours
+            timeoutInMinutes: 1440
+            inputs:
+              instructions: 'Please approve to proceed with Deployment.'
+              onTimeout: 'reject'
+  - stage: Deploy
+    displayName: 'Deploy to Azure App Service'
+    dependsOn: Approval
+    condition: succeeded()
+    jobs:
+      - job: DeployToAppService
+        displayName: 'Deploy to App Service'
+        steps:
+          # Step 1: Deploy to Azure App Service
+          - task: AzureWebAppContainer@1
+            displayName: 'Deploy to Azure Web App for Containers'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appName: '$(appName)'
+              resourceGroupName: '$(resourceGroupName)'
+              imageName: '$(containerRegistry)/$(imageRepository):$(imageTag)'
+
+          # Step 2: Update application settings if needed
+          - task: AzureAppServiceSettings@1
+            displayName: 'Update App Service Settings'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appName: '$(appName)'
+              resourceGroupName: '$(resourceGroupName)'
+              appSettings: |
+                [
+                  {
+                    "name": "SPRING_DATASOURCE_URL",
+                    "value": "$(SPRING_DATASOURCE_URL)"
+                  },
+                  {
+                    "name": "SPRING_DATASOURCE_USERNAME",
+                    "value": "$(SPRING_DATASOURCE_USERNAME)"
+                  },
+                  {
+                    "name": "SPRING_DATASOURCE_PASSWORD",
+                    "value": "$(SPRING_DATASOURCE_PASSWORD)"
+                  },
+                  {
+                    "name": "APP_FRONTEND_URL",
+                    "value": "$(APP_FRONTEND_URL)"
+                  },
+                  {
+                    "name": "JWT_SECRET",
+                    "value": "$(JWT_SECRET)"
+                  }
+                ]

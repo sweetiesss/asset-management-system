@@ -1,0 +1,1 @@
+insert into assignment_statuses (name) values ('Completed')
